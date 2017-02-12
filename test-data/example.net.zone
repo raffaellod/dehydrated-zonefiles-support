@@ -1,0 +1,15 @@
+$ORIGIN example.net.
+$TTL 1h                  ; default expiration time of all resource records without their own TTL value
+example.net.  IN  SOA   ns.example.net. username.example.net. (
+                           35;version
+                           1d
+                           2h
+                           4w
+                           1h
+                        )
+example.net.  IN  NS    ns
+ns            IN  A     192.0.2.2
+              IN  AAAA  2001:db8:10::2
+www           IN  CNAME example.net.
+wwwtest       IN  CNAME www                   ; wwwtest.example.net is another alias for www.example.net
+mail          IN  A     192.0.2.3

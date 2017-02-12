@@ -1,0 +1,105 @@
+#!/bin/sh
+# -*- coding: utf-8; mode: sh; tab-width: 3; indent-tabs-mode: nil -*-
+#
+# Copyright 2017
+# Raffaello D. Di Napoli
+
+[ -n "${ZONES_DIR:-}" ] || ZONES_DIR=/etc/nsd
+
+
+awk_zone_parsing='
+   function strip_final_dot(s) {
+      sub(/\.$/, "", s)
+      return s
+   }
+
+   {
+      sub(/;.*$/, "")
+      if (/^\$/) {
+         # Not a resource record, but we want to capture $ORIGIN for later use.
+         if ($1 == "$ORIGIN") {
+            zone_origin = $2
+         }
+         rrname = ""
+         rrtype = ""
+      } else if (NF >= 2) {
+         if (/^\s/) {
+            # Missing first field.
+            field = 1
+         } else {
+            if ($1 == "@") {
+               last_rrname = zone_origin
+            } else {
+               if ($1 ~ /\.$/) {
+                  # Absolute name.
+                  last_rrname = $1
+               } else {
+                  # The name is relative to $ORIGIN; prepend that.
+                  last_rrname = $1 "." zone_origin
+               }
+            }
+            field = 2
+         }
+         rrname = last_rrname
+         if ($field ~ /^\d+$/) {
+            # Skip the TTL field.
+            ++field
+         }
+         if ($field == "IN") {
+            rrtype = $(field + 1)
+         } else {
+            # Not an Internet field.
+            rrtype = ""
+         }
+      }
+   }
+'
+
+print_domains() {
+   local file domain
+   for file in "${ZONES_DIR}"/*.zone; do
+      [ -r "${file}" ] || continue
+      awk <"${file}" "${awk_zone_parsing}"'
+         $1 == "$ORIGIN" {
+            print strip_final_dot($2)
+            next
+         }
+         rrtype ~ /^(A|AAAA|CNAME)$/ {
+            length_diff = length(rrname) - length(zone_origin)
+            # Only print this host name if it’s in this domain.
+            if (length_diff > 0 && substr(rrname, length_diff + 1) == zone_origin) {
+               print strip_final_dot(rrname)
+            }
+         }
+      ' | {
+         read -r domain
+         echo "${domain}"
+         LC_ALL=C sort -u
+      } |
+      tr '\n' ' ' |
+      sed -e 's/ $/\n/'
+   done
+   exit 0
+}
+
+deploy_challenge() {
+   echo "${@}"
+   echo 'PRESS ENTER when done'
+   read x
+   exit 0
+}
+
+clean_challenge() {
+   echo "${@}"
+   echo 'PRESS ENTER when done'
+   read x
+   exit 0
+}
+
+case "${1}" in
+(print_domains|deploy_challenge|clean_challenge)
+   "${@}" ;;
+(*)
+   echo "Unsupported challenge: ${1}"
+   exit 0 ;;
+esac

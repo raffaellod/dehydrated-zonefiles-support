@@ -1,0 +1,38 @@
+#!/bin/sh
+# -*- coding: utf-8; mode: sh; tab-width: 3; indent-tabs-mode: nil -*-
+#
+# Copyright 2017
+# Raffaello D. Di Napoli
+
+[ -n "${ZONES_DIR:-}" ] || export ZONES_DIR=test-data
+
+assert_read() {
+   local assert_name="${1}" output=
+   read -r output
+   if [ "${output}" = "${2}" ]; then
+      echo "${assert_name}: pass"
+   else
+      echo "${assert_name}: fail:"
+      echo "  expected: ${2}"
+      echo "  read    : ${output}"
+      exit 1
+   fi
+}
+
+assert_eof() {
+   local assert_name="${1}"
+   if grep -qF ''; then
+      echo "${assert_name}: fail:"
+      echo "  unexpected excess output"
+   fi
+}
+
+echo "Testing print_domains"
+./zonefiles-hook print_domains |
+{
+   assert_read 'print_domains example.com' 'example.com mail.example.com mail2.example.com mail3.example.com ns.example.com www.example.com wwwtest.example.com'
+   assert_read 'print_domains example.net' 'example.net mail.example.net ns.example.net www.example.net wwwtest.example.net'
+   assert_eof  'print_domains'
+}
+
+exit 0
