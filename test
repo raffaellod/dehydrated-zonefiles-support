@@ -6,33 +6,104 @@
 
 [ -n "${ZONES_DIR:-}" ] || export ZONES_DIR=test-data
 
-assert_read() {
-   local assert_name="${1}" output=
-   read -r output
-   if [ "${output}" = "${2}" ]; then
+assert_file_contains() {
+   local assert_name="${1}" file="${2}" match="${3}"
+   if grep -q "${match}" <"${file}"; then
       echo "${assert_name}: pass"
    else
       echo "${assert_name}: fail:"
-      echo "  expected: ${2}"
-      echo "  read    : ${output}"
+      echo "  missing: ${match}"
+   fi
+}
+
+assert_file_not_contains() {
+   local assert_name="${1}" file="${2}" match="${3}"
+   if grep -q "${match}" <"${file}"; then
+      echo "${assert_name}: fail:"
+      echo "  offending: ${match}"
+   else
+      echo "${assert_name}: pass"
+   fi
+}
+
+assert_line_equals() {
+   local assert_name="${1}" file="${2}" line="${3}" expected="${4}" actual
+   actual=$(sed -ne "${line} p" <"${file}")
+   if [ "${actual}" = "${expected}" ]; then
+      echo "${assert_name}: pass"
+   else
+      echo "${assert_name}: fail:"
+      echo "  expected: ${expected}"
+      echo "  actual  : ${actual}"
       exit 1
    fi
 }
 
-assert_eof() {
+assert_read() {
+   local assert_name="${1}" expected="${2}" actual=
+   read -r actual
+   if [ "${actual}" = "${expected}" ]; then
+      echo "${assert_name}: pass"
+   else
+      echo "${assert_name}: fail:"
+      echo "  expected: ${expected}"
+      echo "  actual  : ${actual}"
+      exit 1
+   fi
+}
+
+assert_read_eof() {
    local assert_name="${1}"
    if grep -qF ''; then
       echo "${assert_name}: fail:"
       echo "  unexpected excess output"
+   else
+      echo "${assert_name}: pass"
    fi
 }
 
 echo "Testing print_domains"
 ./zonefiles-hook print_domains |
 {
-   assert_read 'print_domains example.com' 'example.com mail.example.com mail2.example.com mail3.example.com ns.example.com www.example.com wwwtest.example.com'
-   assert_read 'print_domains example.net' 'example.net mail.example.net ns.example.net www.example.net wwwtest.example.net'
-   assert_eof  'print_domains'
+   assert_read     'print_domains example.com' \
+      'example.com mail.example.com mail2.example.com mail3.example.com ns.example.com www.example.com wwwtest.example.com'
+   assert_read     'print_domains example.net' \
+      'example.net mail.example.net ns.example.net www.example.net wwwtest.example.net'
+   assert_read_eof 'print_domains'
 }
+
+restore_test_files() {
+   git checkout "${ZONES_DIR}/*.zone"
+}
+
+trap restore_test_files EXIT
+
+today=$(date -u +%Y%m%d)
+
+./zonefiles-hook deploy_challenge example.com challenge1 key1
+assert_line_equals 'deploy_challenge example.com' "${ZONES_DIR}/example.com.zone" 3 \
+   "@             IN  SOA   ns.example.com. username.example.com. ( ${today}01 1d 2h 4w 1h )"
+assert_file_contains 'deploy_challenge example.com' "${ZONES_DIR}/example.com.zone" \
+   '^_acme-challenge TXT "key1"$'
+
+./zonefiles-hook deploy_challenge example.net challenge2 key2 www.example.net challenge3 key3
+assert_line_equals 'deploy_challenge example.net' "${ZONES_DIR}/example.net.zone" 4 \
+   '                           36;version'
+assert_file_contains 'deploy_challenge example.net' "${ZONES_DIR}/example.net.zone" \
+   '^_acme-challenge TXT "key2"$'
+assert_file_contains 'deploy_challenge example.net' "${ZONES_DIR}/example.net.zone" \
+   '^_acme-challenge.www TXT "key3"$'
+
+./zonefiles-hook clean_challenge example.com challenge1 key1
+assert_line_equals 'clean_challenge example.com' "${ZONES_DIR}/example.com.zone" 3 \
+   "@             IN  SOA   ns.example.com. username.example.com. ( ${today}02 1d 2h 4w 1h )"
+assert_file_not_contains 'clean_challenge example.com' "${ZONES_DIR}/example.com.zone" \
+   '^_acme-challenge'
+
+./zonefiles-hook clean_challenge example.net challenge2 key2 www.example.net challenge3 key3
+assert_line_equals 'clean_challenge example.net' "${ZONES_DIR}/example.net.zone" 4 \
+   '                           37;version'
+assert_file_not_contains 'clean_challenge example.net' "${ZONES_DIR}/example.net.zone" \
+   '^_acme-challenge'
 
 exit 0

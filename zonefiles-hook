@@ -4,7 +4,8 @@
 # Copyright 2017
 # Raffaello D. Di Napoli
 
-[ -n "${ZONES_DIR:-}" ] || ZONES_DIR=/etc/nsd
+[ -n "${ZONES_DIR}" ] || ZONES_DIR=/etc/nsd
+[ -n "${DNS_SERVER_PIDFILE}" ] || DNS_SERVER_PIDFILE=/run/nsd.pid
 
 
 awk_zone_parsing='
@@ -13,47 +14,145 @@ awk_zone_parsing='
       return s
    }
 
+   # This big block parses each line, making available to other blocks:
+   # •  rr_name: fully-qualified name of the resource record (e.g. “example.com.”,
+   #       “www.example.com”); vaues such as “@”, “www”, or “”, all of which valid in a zone file,
+   #       are turned into fully qualified;
+   # •  rr_type: type of the resource record (e.g. “SOA”, “A”, “CNAME”);
+   # •  zone_origin: the string declared by “$ORIGIN”;
+   # •  stripped_comment: comment that was removed from $0, if any.
+   #
+   # If $0 does not define a resource record, the values above will all be set to "".
    {
-      sub(/;.*$/, "")
+      rr_name = ""
+      rr_type = ""
+      if (match($0, /[\t ]*;.*$/)) {
+         stripped_comment = substr($0, RSTART)
+         $0 = substr($0, 1, length($0) - RLENGTH)
+      } else {
+         stripped_comment = ""
+      }
       if (/^\$/) {
          # Not a resource record, but we want to capture $ORIGIN for later use.
          if ($1 == "$ORIGIN") {
             zone_origin = $2
          }
-         rrname = ""
-         rrtype = ""
       } else if (NF >= 2) {
-         if (/^\s/) {
+         if (/^[\t ]/) {
             # Missing first field.
-            field = 1
+            rr_next_field = 1
          } else {
             if ($1 == "@") {
-               last_rrname = zone_origin
+               last_rr_name = zone_origin
             } else {
                if ($1 ~ /\.$/) {
                   # Absolute name.
-                  last_rrname = $1
+                  last_rr_name = $1
                } else {
                   # The name is relative to $ORIGIN; prepend that.
-                  last_rrname = $1 "." zone_origin
+                  last_rr_name = $1 "." zone_origin
                }
             }
-            field = 2
+            rr_next_field = 2
          }
-         rrname = last_rrname
-         if ($field ~ /^\d+$/) {
+         rr_name = last_rr_name
+         if ($rr_next_field ~ /^\d+$/) {
             # Skip the TTL field.
-            ++field
+            ++rr_next_field
          }
-         if ($field == "IN") {
-            rrtype = $(field + 1)
-         } else {
-            # Not an Internet field.
-            rrtype = ""
+         if ($rr_next_field == "IN") {
+            ++rr_next_field
+            rr_type = $rr_next_field
          }
+         ++rr_next_field
       }
    }
 '
+
+prepare_zonefile_for_update() {
+   local file="${1}" domain line new_version
+   awk <"${file}" -vwanted_domain="${2}" -vtoday=$(date -u +%Y%m%d) "${awk_zone_parsing}"'
+      function replace_version_and_print(version) {
+         # Find where the value of version occurs in $0, and cut $0 up so that we can replace just
+         # the version (see end of function).
+         if (NR == soa_NR) {
+            # Still on the same line as the SOA record, so we need to first find the parenthesis.
+            find_start = index($0, ")") + 1
+         } else {
+            find_start = 1
+         }
+         # The left-most number must be the version.
+         match($0, /[0-9]+/)
+         if (substr($0, RSTART, RLENGTH) != version) {
+            return 1
+         }
+         line_before = substr($0, 1, RSTART - 1)
+         line_after = substr($0, RSTART + RLENGTH)
+
+         # Update the version.
+         if (length(version) > 8) {
+            # Assume that such a large number is a timestamp + revision.
+            updated_day = 0 + substr(version, 1, 8)
+            revision = 0 + substr(version, 9)
+            revision_digits = length(version) - 8
+            if (updated_day < today) {
+               updated_day = today
+               revision = 1
+            } else {
+               # Date is today or in the future; keep the date and move to the next revision.
+               ++revision;
+            }
+            version = sprintf("%d%." revision_digits "d", today, revision)
+         } else {
+            # Looks like it’s just a number, so increment it.
+            version = 1 + version
+         }
+
+         print strip_final_dot(zone_origin) " " NR
+         print line_before version line_after stripped_comment
+         return 0
+      }
+
+      zone_origin && strip_final_dot(zone_origin) != wanted_domain {
+         exit(5)
+      }
+
+      rr_type == "SOA" {
+         # Find the open parenthesis and the version field (which may be on a separate line).
+         for (; rr_next_field <= NF; ++rr_next_field) {
+            if (soa_NR) {
+               if ($rr_next_field !~ /^[0-9]+$/) {
+                  exit(1)
+               }
+               replace_version_and_print($rr_next_field)
+               exit(0)
+            }
+            if ($rr_next_field == "(") {
+               soa_NR = NR
+            }
+         }
+         next
+      }
+
+      soa_NR && NF >= 1 {
+         if ($1 !~ /^[0-9]+$/) {
+            exit(1)
+         }
+         replace_version_and_print($1)
+         exit(0)
+      }
+   ' |
+   {
+      read -r domain line && IFS= read -r new_version || return 1
+      sed -i -e "
+         # Replace the line containing the version.
+         ${line} s/^.*$/${new_version}/
+         # Clean up any challenges.
+         /^_acme-challenge/ d
+      " "${file}"
+      return 0
+   }
+}
 
 print_domains() {
    local file domain
@@ -64,11 +163,11 @@ print_domains() {
             print strip_final_dot($2)
             next
          }
-         rrtype ~ /^(A|AAAA|CNAME)$/ {
-            length_diff = length(rrname) - length(zone_origin)
+         rr_type ~ /^(A|AAAA|CNAME)$/ {
+            length_diff = length(rr_name) - length(zone_origin)
             # Only print this host name if it’s in this domain.
-            if (length_diff > 0 && substr(rrname, length_diff + 1) == zone_origin) {
-               print strip_final_dot(rrname)
+            if (length_diff > 0 && substr(rr_name, length_diff + 1) == zone_origin) {
+               print strip_final_dot(rr_name)
             }
          }
       ' | {
@@ -82,17 +181,38 @@ print_domains() {
    exit 0
 }
 
+reload_dns_server_config() {
+   if [ -r "${DNS_SERVER_PIDFILE}" ]; then
+      local pid=$(cat <"${DNS_SERVER_PIDFILE}")
+      if [ -n "${pid}" ]; then
+         kill -HUP "${pid}"
+      fi
+   fi
+}
+
 deploy_challenge() {
-   echo "${@}"
-   echo 'PRESS ENTER when done'
-   read x
+   local domain="${1}" file hostname
+   for file in "${ZONES_DIR}"/*.zone; do
+      [ -r "${file}" ] || continue
+      prepare_zonefile_for_update "${file}" "${1}" || continue
+      while [ ${#} -ge 3 ]; do
+         hostname=
+         [ "${1}" != "${domain}" ] && hostname=".${1%.${domain}}"
+         echo "_acme-challenge${hostname} TXT \"${3}\""
+         shift 3
+      done >>"${file}"
+   done
+   reload_dns_server_config
    exit 0
 }
 
 clean_challenge() {
-   echo "${@}"
-   echo 'PRESS ENTER when done'
-   read x
+   local file
+   for file in "${ZONES_DIR}"/*.zone; do
+      [ -r "${file}" ] || continue
+      prepare_zonefile_for_update "${file}" "${1}"
+   done
+   reload_dns_server_config
    exit 0
 }
 
