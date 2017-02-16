@@ -182,21 +182,28 @@ print_domains() {
 }
 
 reload_dns_server_config() {
-   if [ -r "${DNS_SERVER_PIDFILE}" ]; then
-      local pid=$(cat <"${DNS_SERVER_PIDFILE}")
-      if [ -n "${pid}" ]; then
-         kill -HUP "${pid}"
-      fi
+   if [ ! -r "${DNS_SERVER_PIDFILE}" ]; then
+      echo "  No PIDfile, can't reload DNS server" >&2
+      exit 1
    fi
+   local pid=$(cat <"${DNS_SERVER_PIDFILE}")
+   if [ -z "${pid}" ]; then
+      echo "  No PID, can't reload DNS server" >&2
+      exit 1
+   fi
+   echo "  Reloading configuration for DNS server with PID ${pid}" >&2
+   kill -HUP "${pid}"
 }
 
 deploy_challenge() {
    local domain="${1}" file hostname
    for file in "${ZONES_DIR}"/*.zone; do
       [ -r "${file}" ] || continue
+      echo "  Updating zone file ${file}" >&2
       prepare_zonefile_for_update "${file}" "${1}" || continue
       while [ ${#} -ge 3 ]; do
          hostname=
+         echo "  Deploying challenge for ${1}" >&2
          [ "${1}" != "${domain}" ] && hostname=".${1%.${domain}}"
          echo "_acme-challenge${hostname} TXT \"${3}\""
          shift 3
@@ -210,6 +217,7 @@ clean_challenge() {
    local file
    for file in "${ZONES_DIR}"/*.zone; do
       [ -r "${file}" ] || continue
+      echo "  Updating zone file ${file}" >&2
       prepare_zonefile_for_update "${file}" "${1}"
    done
    reload_dns_server_config
@@ -220,6 +228,6 @@ case "${1}" in
 (print_domains|deploy_challenge|clean_challenge)
    "${@}" ;;
 (*)
-   echo "Unsupported challenge: ${1}"
+   echo "Unsupported operation: ${1}" >&2
    exit 0 ;;
 esac
