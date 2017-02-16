@@ -5,7 +5,7 @@
 # Raffaello D. Di Napoli
 
 [ -n "${ZONES_DIR}" ] || ZONES_DIR=/etc/nsd
-[ -n "${DNS_SERVER_PIDFILE}" ] || DNS_SERVER_PIDFILE=/run/nsd.pid
+[ -n "${DNS_SERVER_PIDFILE}" ] || DNS_SERVER_PIDFILE=/run/nsd/nsd.pid
 
 
 awk_zone_parsing='
