@@ -226,18 +226,21 @@ clean_challenge() {
 }
 
 deploy_cert() {
-   local domain="${1}"
-   local privkey="$(readlink -f "${2}")"
-   local cert="$(readlink -f "${3}")"
-   local fullchain="$(readlink -f "${4}")"
-   local chain="$(readlink -f "${5}")"
-   local timestamp="${6}"
+   local domain="${1}" timestamp="${6}"
+   local   privkey_src="$(readlink -f "${2}")"
+   local      cert_src="$(readlink -f "${3}")"
+   local fullchain_src="$(readlink -f "${4}")"
+   local     chain_src="$(readlink -f "${5}")"
    if [ -d /etc/ssl/apache2 ]; then
-      cp -a "${privkey}"   "/etc/ssl/apache2/${domain}.key"
-      cp -a "${cert}"      "/etc/ssl/apache2/${domain}.crt"
-      cp -a "${fullchain}" "/etc/ssl/apache2/${domain}.fullchain.crt"
-      chmod 400 "/etc/ssl/apache2/${domain}.key"
-      chmod 444 "/etc/ssl/apache2/${domain}."*crt
+      local privkey_dst="/etc/ssl/apache2/${domain}.key"
+      local cert_dst="/etc/ssl/apache2/${domain}.crt"
+      local fullchain_dst="/etc/ssl/apache2/${domain}.fullchain.crt"
+      cp -a "${privkey_src}"   "${privkey_dst}"
+      cp -a "${cert_src}"      "${cert_dst}"
+      cp -a "${fullchain_src}" "${fullchain_dst}"
+      chmod 400 "${privkey_dst}"
+      chmod 444 "${cert_dst}" "${fullchain_dst}"
+      chown root:root "${privkey_dst}" "${cert_dst}" "${fullchain_dst}"
       reload_server_config HTTP "${HTTP_SERVER_PIDFILE}"
    fi
 }
