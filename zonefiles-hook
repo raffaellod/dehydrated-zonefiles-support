@@ -6,6 +6,7 @@
 
 [ -n "${ZONES_DIR}" ] || ZONES_DIR=/etc/nsd
 [ -n "${DNS_SERVER_PIDFILE}" ] || DNS_SERVER_PIDFILE=/run/nsd/nsd.pid
+[ -n "${HTTP_SERVER_PIDFILE}" ] || HTTP_SERVER_PIDFILE=/run/apache2.pid
 
 
 awk_zone_parsing='
@@ -181,17 +182,17 @@ print_domains() {
    exit 0
 }
 
-reload_dns_server_config() {
-   if [ ! -r "${DNS_SERVER_PIDFILE}" ]; then
-      echo "  No PIDfile, can't reload DNS server" >&2
+reload_server_config() {
+   if [ ! -r "${2}" ]; then
+      echo "  No PIDfile, can't reload ${1} server" >&2
       exit 1
    fi
-   local pid=$(cat <"${DNS_SERVER_PIDFILE}")
+   local pid=$(cat <"${2}")
    if [ -z "${pid}" ]; then
-      echo "  No PID, can't reload DNS server" >&2
+      echo "  No PID, can't reload ${1} server" >&2
       exit 1
    fi
-   echo "  Reloading configuration for DNS server with PID ${pid}" >&2
+   echo "  Reloading configuration for ${1} server with PID ${pid}" >&2
    kill -HUP "${pid}"
 }
 
@@ -209,7 +210,7 @@ deploy_challenge() {
          shift 3
       done >>"${file}"
    done
-   reload_dns_server_config
+   reload_server_config DNS "${DNS_SERVER_PIDFILE}"
    exit 0
 }
 
@@ -220,13 +221,32 @@ clean_challenge() {
       echo "  Updating zone file ${file}" >&2
       prepare_zonefile_for_update "${file}" "${1}"
    done
-   reload_dns_server_config
+   reload_server_config DNS "${DNS_SERVER_PIDFILE}"
    exit 0
 }
 
+deploy_cert() {
+   local domain="${1}"
+   local privkey="$(readlink -f "${2}")"
+   local cert="$(readlink -f "${3}")"
+   local fullchain="$(readlink -f "${4}")"
+   local chain="$(readlink -f "${5}")"
+   local timestamp="${6}"
+   if [ -d /etc/ssl/apache2 ]; then
+      cp -a "${privkey}"   "/etc/ssl/apache2/${domain}.key"
+      cp -a "${cert}"      "/etc/ssl/apache2/${domain}.crt"
+      cp -a "${fullchain}" "/etc/ssl/apache2/${domain}.fullchain.crt"
+      chmod 400 "/etc/ssl/apache2/${domain}.key"
+      chmod 444 "/etc/ssl/apache2/${domain}."*crt
+      reload_server_config HTTP "${HTTP_SERVER_PIDFILE}"
+   fi
+}
+
 case "${1}" in
-(print_domains|deploy_challenge|clean_challenge)
+(print_domains|deploy_challenge|clean_challenge|deploy_cert)
    "${@}" ;;
+(unchanged_cert)
+   ;;
 (*)
    echo "Unsupported operation: ${1}" >&2
    exit 0 ;;
