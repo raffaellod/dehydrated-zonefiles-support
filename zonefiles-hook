@@ -248,6 +248,6 @@ case "${1}" in
 (unchanged_cert)
    ;;
 (*)
-   echo "Unsupported operation: ${1}" >&2
+   echo "Unsupported operation: ${*}" >&2
    exit 0 ;;
 esac
