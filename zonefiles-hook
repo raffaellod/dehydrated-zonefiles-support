@@ -7,6 +7,7 @@
 [ -n "${ZONES_DIR}" ] || ZONES_DIR=/etc/nsd
 [ -n "${DNS_SERVER_PIDFILE}" ] || DNS_SERVER_PIDFILE=/run/nsd/nsd.pid
 [ -n "${HTTP_SERVER_PIDFILE}" ] || HTTP_SERVER_PIDFILE=/run/apache2.pid
+[ -n "${IMAP_SERVER_PIDFILE}" ] || IMAP_SERVER_PIDFILE=/run/dovecot/master.pid
 
 
 awk_zone_parsing='
@@ -15,11 +16,25 @@ awk_zone_parsing='
       return s
    }
 
+   function make_fully_qualified(s) {
+      if (s == "@") {
+         return zone_origin
+      } else if (s ~ /\.$/) {
+         # Absolute name.
+         return s
+      } else {
+         # The name is relative to $ORIGIN; prepend that.
+         return s "." zone_origin
+      }
+   }
+
    # This big block parses each line, making available to other blocks:
    # •  rr_name: fully-qualified name of the resource record (e.g. “example.com.”,
    #       “www.example.com”); vaues such as “@”, “www”, or “”, all of which valid in a zone file,
    #       are turned into fully qualified;
    # •  rr_type: type of the resource record (e.g. “SOA”, “A”, “CNAME”);
+   # •  rr_value: value of the resource record (string for TXT, IP address for A/AAAA,
+   #       fully-qualified name for CNAME, MX and other hostname-like types);
    # •  zone_origin: the string declared by “$ORIGIN”;
    # •  stripped_comment: comment that was removed from $0, if any.
    #
@@ -43,17 +58,7 @@ awk_zone_parsing='
             # Missing first field.
             rr_next_field = 1
          } else {
-            if ($1 == "@") {
-               last_rr_name = zone_origin
-            } else {
-               if ($1 ~ /\.$/) {
-                  # Absolute name.
-                  last_rr_name = $1
-               } else {
-                  # The name is relative to $ORIGIN; prepend that.
-                  last_rr_name = $1 "." zone_origin
-               }
-            }
+            last_rr_name = make_fully_qualified($1)
             rr_next_field = 2
          }
          rr_name = last_rr_name
@@ -62,10 +67,37 @@ awk_zone_parsing='
             ++rr_next_field
          }
          if ($rr_next_field == "IN") {
+            # Consume the Class field.
             ++rr_next_field
-            rr_type = $rr_next_field
          }
-         ++rr_next_field
+         if ($rr_next_field ~ /^(CNAME|NS)$/) {
+            rr_type = $rr_next_field
+            ++rr_next_field
+            rr_value = make_fully_qualified($rr_next_field)
+         } else if ($rr_next_field == "MX") {
+            rr_type = $rr_next_field
+            # Skip type and priority.
+            rr_next_field += 2
+            rr_value = make_fully_qualified($rr_next_field)
+            ++rr_next_field
+         } else if ($rr_next_field ~ /^(A|AAAA)$/) {
+            rr_type = $rr_next_field
+            ++rr_next_field
+            rr_value = $rr_next_field
+            ++rr_next_field
+         } else if ($rr_next_field == "TXT") {
+            rr_type = $rr_next_field
+            ++rr_next_field
+            rr_value = $rr_next_field
+            # TXT may be quoted.
+            if (match(rr_value, /^".*"$/)) {
+               rr_value = substr(rr_value, 2, length(rr_value) - 2)
+            }
+            ++rr_next_field
+         } else if ($rr_next_field == "SOA") {
+            rr_type = $rr_next_field
+            ++rr_next_field
+         }
       }
    }
 '
@@ -196,6 +228,24 @@ reload_server_config() {
    kill -HUP "${pid}"
 }
 
+domain_includes_mx_servers() {
+   local domain="${1}" file
+   for file in "${ZONES_DIR}"/*.zone; do
+      [ -r "${file}" ] || continue
+      awk <"${file}" -vdomain="${domain}" "${awk_zone_parsing}"'
+         rr_type == "MX" {
+            if (match(rr_value, /[^.]+.[^.]+.$/)) {
+               # -1 to skip the trailing dot.
+               if (domain == substr(rr_value, RSTART, RLENGTH - 1)) {
+                  exit 1
+               }
+            }
+         }
+      ' || return 0
+   done
+   return 1
+}
+
 deploy_challenge() {
    local domain="${1}" file hostname
    for file in "${ZONES_DIR}"/*.zone; do
@@ -225,30 +275,52 @@ clean_challenge() {
    exit 0
 }
 
+deploy_cert_to_dir() {
+   local dst="${1}"
+   local   privkey_dst="${dst}/${domain}.key"
+   local      cert_dst="${dst}/${domain}.crt"
+   local fullchain_dst="${dst}/${domain}.fullchain.crt"
+   cp -a "${privkey_src}"   "${privkey_dst}"
+   cp -a "${cert_src}"      "${cert_dst}"
+   cp -a "${fullchain_src}" "${fullchain_dst}"
+   chmod 400 "${privkey_dst}"
+   chmod 444 "${cert_dst}" "${fullchain_dst}"
+   chown root:root "${privkey_dst}" "${cert_dst}" "${fullchain_dst}"
+}
+
 deploy_cert() {
-   local domain="${1}" timestamp="${6}"
-   local   privkey_src="$(readlink -f "${2}")"
-   local      cert_src="$(readlink -f "${3}")"
-   local fullchain_src="$(readlink -f "${4}")"
-   local     chain_src="$(readlink -f "${5}")"
+   domain="${1}"
+   timestamp="${6}"
+     privkey_src="$(readlink -f "${2}")"
+        cert_src="$(readlink -f "${3}")"
+   fullchain_src="$(readlink -f "${4}")"
+       chain_src="$(readlink -f "${5}")"
    if [ -d /etc/ssl/apache2 ]; then
-      local privkey_dst="/etc/ssl/apache2/${domain}.key"
-      local cert_dst="/etc/ssl/apache2/${domain}.crt"
-      local fullchain_dst="/etc/ssl/apache2/${domain}.fullchain.crt"
-      cp -a "${privkey_src}"   "${privkey_dst}"
-      cp -a "${cert_src}"      "${cert_dst}"
-      cp -a "${fullchain_src}" "${fullchain_dst}"
-      chmod 400 "${privkey_dst}"
-      chmod 444 "${cert_dst}" "${fullchain_dst}"
-      chown root:root "${privkey_dst}" "${cert_dst}" "${fullchain_dst}"
+      deploy_cert_to_dir /etc/ssl/apache2
       reload_server_config HTTP "${HTTP_SERVER_PIDFILE}"
    fi
+   if domain_includes_mx_servers "${domain}"; then
+      if [ -d /etc/ssl/postfix ]; then
+         deploy_cert_to_dir /etc/ssl/postfix
+         echo "  Reloading configuration for SMTP server" >&2
+         /usr/sbin/postfix reload
+      fi
+      if [ -d /etc/ssl/dovecot ]; then
+         deploy_cert_to_dir /etc/ssl/dovecot
+         reload_server_config IMAP "${IMAP_SERVER_PIDFILE}"
+      fi
+   fi
+   unset domain timestamp privkey_src cert_src fullchain_src chain_src
 }
 
 case "${1}" in
 (print_domains|deploy_challenge|clean_challenge|deploy_cert)
    "${@}" ;;
 (unchanged_cert)
+   ;;
+(test_domain_includes_mx_servers)
+   "${1##test_}" "${2}"
+   exit ${?}
    ;;
 (*)
    echo "Unsupported operation: ${*}" >&2

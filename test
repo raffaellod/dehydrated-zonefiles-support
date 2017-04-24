@@ -104,4 +104,11 @@ assert_line_equals 'clean_challenge example.net' "${ZONES_DIR}/example.net.zone"
 assert_file_not_contains 'clean_challenge example.net' "${ZONES_DIR}/example.net.zone" \
    '^_acme-challenge'
 
+./zonefiles-hook test_domain_includes_mx_servers example.com
+assert_equal 'domain_includes_mx_servers example.com' 0 ${?}
+./zonefiles-hook test_domain_includes_mx_servers example.net
+assert_equal 'domain_includes_mx_servers example.net' 0 ${?}
+./zonefiles-hook test_domain_includes_mx_servers example.org
+assert_equal 'domain_includes_mx_servers example.org' 1 ${?}
+
 exit 0

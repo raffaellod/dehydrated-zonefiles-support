@@ -4,7 +4,7 @@ $TTL 1h
 example.com.  IN  NS    ns                    ; ns.example.com is a nameserver for example.com
 example.com.  IN  NS    ns.somewhere.example.net.
 example.com.  IN  MX    10 mail.example.com.
-@             IN  MX    20 mail2.example.com.
+@             IN  MX    20 mail2.example.net.
 @             IN  MX    50 mail3
 example.com.  IN  A     192.0.2.1
               IN  AAAA  2001:db8:10::1        ; IPv6 address for example.com
