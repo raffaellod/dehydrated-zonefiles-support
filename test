@@ -29,27 +29,13 @@ assert_file_not_contains() {
 assert_line_equals() {
    local assert_name="${1}" file="${2}" line="${3}" expected="${4}" actual
    actual=$(sed -ne "${line} p" <"${file}")
-   if [ "${actual}" = "${expected}" ]; then
-      echo "${assert_name}: pass"
-   else
-      echo "${assert_name}: fail:"
-      echo "  expected: ${expected}"
-      echo "  actual  : ${actual}"
-      exit 1
-   fi
+   assert_equal "${assert_name}" "${expected}" "${actual}"
 }
 
 assert_read() {
    local assert_name="${1}" expected="${2}" actual=
    read -r actual
-   if [ "${actual}" = "${expected}" ]; then
-      echo "${assert_name}: pass"
-   else
-      echo "${assert_name}: fail:"
-      echo "  expected: ${expected}"
-      echo "  actual  : ${actual}"
-      exit 1
-   fi
+   assert_equal "${assert_name}" "${expected}" "${actual}"
 }
 
 assert_read_eof() {
@@ -59,6 +45,18 @@ assert_read_eof() {
       echo "  unexpected excess output"
    else
       echo "${assert_name}: pass"
+   fi
+}
+
+assert_equal() {
+   local assert_name="${1}" expected="${2}" actual="${3}"
+   if [ "${actual}" = "${expected}" ]; then
+      echo "${assert_name}: pass"
+   else
+      echo "${assert_name}: fail:"
+      echo "  expected: ${expected}"
+      echo "  actual  : ${actual}"
+      exit 1
    fi
 }
 
