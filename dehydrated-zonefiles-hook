@@ -1,7 +1,7 @@
 #!/bin/sh
 # -*- coding: utf-8; mode: sh; tab-width: 3; indent-tabs-mode: nil -*-
 #
-# Copyright 2017
+# Copyright 2017, 2021
 # Raffaello D. Di Napoli
 
 [ -n "${ZONES_DIR}" ] || ZONES_DIR=/etc/nsd
@@ -187,7 +187,7 @@ prepare_zonefile_for_update() {
    }
 }
 
-print_domains() {
+print_domains_txt() {
    local file domain
    for file in "${ZONES_DIR}"/*.zone; do
       [ -r "${file}" ] || continue
@@ -250,15 +250,17 @@ deploy_challenge() {
    local domain="${1}" file hostname
    for file in "${ZONES_DIR}"/*.zone; do
       [ -r "${file}" ] || continue
-      echo "  Updating zone file ${file}" >&2
       prepare_zonefile_for_update "${file}" "${1}" || continue
+
+      echo "  Deploying challenges to zone file ${file}" >&2
       while [ ${#} -ge 3 ]; do
          hostname=
-         echo "  Deploying challenge for ${1}" >&2
+         echo "    Deploying challenge for ${1}" >&2
          [ "${1}" != "${domain}" ] && hostname=".${1%.${domain}}"
          echo "_acme-challenge${hostname} TXT \"${3}\""
          shift 3
       done >>"${file}"
+      break
    done
    reload_server_config DNS "${DNS_SERVER_PIDFILE}"
    exit 0
@@ -268,8 +270,9 @@ clean_challenge() {
    local file
    for file in "${ZONES_DIR}"/*.zone; do
       [ -r "${file}" ] || continue
-      echo "  Updating zone file ${file}" >&2
-      prepare_zonefile_for_update "${file}" "${1}"
+      prepare_zonefile_for_update "${file}" "${1}" || continue
+
+      echo "  Cleaned up challenges from zone file ${file}" >&2
    done
    reload_server_config DNS "${DNS_SERVER_PIDFILE}"
    exit 0
@@ -314,15 +317,16 @@ deploy_cert() {
 }
 
 case "${1}" in
-(print_domains|deploy_challenge|clean_challenge|deploy_cert)
+(print_domains_txt|deploy_challenge|clean_challenge|deploy_cert)
    "${@}" ;;
 (unchanged_cert)
    ;;
 (test_domain_includes_mx_servers)
+   # Allow test to access these non-hook functions.
    "${1##test_}" "${2}"
    exit ${?}
    ;;
 (*)
-   echo "Unsupported operation: ${*}" >&2
-   exit 0 ;;
+   exit 0
+   ;;
 esac

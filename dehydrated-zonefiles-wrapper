@@ -1,0 +1,16 @@
+#!/bin/sh -eu
+# -*- coding: utf-8; mode: sh; tab-width: 3; indent-tabs-mode: nil -*-
+#
+# Copyright 2021
+# Raffaello D. Di Napoli
+
+hook="$(dirname "$(readlink "${0}" || echo "${0}")")/dehydrated-zonefiles-hook"
+domains_txt=$(mktemp "${TMPDIR:-/tmp}/domains.txt-XXXXXX")
+on_exit() {
+   rm -f "${domains_txt}"
+}
+trap on_exit EXIT
+
+"${hook}" print_domains_txt >"${domains_txt}"
+dehydrated --challenge dns-01 --domains-txt "${domains_txt}" --hook "${hook}" "${@}"
+# Note: HOOK_CHAINS must be set to yes via config, if auto-deploy is desired.

@@ -1,7 +1,7 @@
 #!/bin/sh
 # -*- coding: utf-8; mode: sh; tab-width: 3; indent-tabs-mode: nil -*-
 #
-# Copyright 2017
+# Copyright 2017, 2021
 # Raffaello D. Di Napoli
 
 [ -n "${ZONES_DIR:-}" ] || export ZONES_DIR=test-data
@@ -60,14 +60,14 @@ assert_equal() {
    fi
 }
 
-echo "Testing print_domains"
-./zonefiles-hook print_domains |
+echo "Testing print_domains_txt"
+./dehydrated-zonefiles-hook print_domains_txt |
 {
-   assert_read     'print_domains example.com' \
+   assert_read     'print_domains_txt example.com' \
       'example.com mail.example.com mail2.example.com mail3.example.com ns.example.com www.example.com wwwtest.example.com'
-   assert_read     'print_domains example.net' \
+   assert_read     'print_domains_txt example.net' \
       'example.net mail.example.net ns.example.net www.example.net wwwtest.example.net'
-   assert_read_eof 'print_domains'
+   assert_read_eof 'print_domains_txt'
 }
 
 restore_test_files() {
@@ -78,13 +78,13 @@ trap restore_test_files EXIT
 
 today=$(date -u +%Y%m%d)
 
-./zonefiles-hook deploy_challenge example.com challenge1 key1
+./dehydrated-zonefiles-hook deploy_challenge example.com challenge1 key1
 assert_line_equals 'deploy_challenge example.com' "${ZONES_DIR}/example.com.zone" 3 \
    "@             IN  SOA   ns.example.com. username.example.com. ( ${today}01 1d 2h 4w 1h )"
 assert_file_contains 'deploy_challenge example.com' "${ZONES_DIR}/example.com.zone" \
    '^_acme-challenge TXT "key1"$'
 
-./zonefiles-hook deploy_challenge example.net challenge2 key2 www.example.net challenge3 key3
+./dehydrated-zonefiles-hook deploy_challenge example.net challenge2 key2 www.example.net challenge3 key3
 assert_line_equals 'deploy_challenge example.net' "${ZONES_DIR}/example.net.zone" 4 \
    '                           36;version'
 assert_file_contains 'deploy_challenge example.net' "${ZONES_DIR}/example.net.zone" \
@@ -92,23 +92,23 @@ assert_file_contains 'deploy_challenge example.net' "${ZONES_DIR}/example.net.zo
 assert_file_contains 'deploy_challenge example.net' "${ZONES_DIR}/example.net.zone" \
    '^_acme-challenge.www TXT "key3"$'
 
-./zonefiles-hook clean_challenge example.com challenge1 key1
+./dehydrated-zonefiles-hook clean_challenge example.com challenge1 key1
 assert_line_equals 'clean_challenge example.com' "${ZONES_DIR}/example.com.zone" 3 \
    "@             IN  SOA   ns.example.com. username.example.com. ( ${today}02 1d 2h 4w 1h )"
 assert_file_not_contains 'clean_challenge example.com' "${ZONES_DIR}/example.com.zone" \
    '^_acme-challenge'
 
-./zonefiles-hook clean_challenge example.net challenge2 key2 www.example.net challenge3 key3
+./dehydrated-zonefiles-hook clean_challenge example.net challenge2 key2 www.example.net challenge3 key3
 assert_line_equals 'clean_challenge example.net' "${ZONES_DIR}/example.net.zone" 4 \
    '                           37;version'
 assert_file_not_contains 'clean_challenge example.net' "${ZONES_DIR}/example.net.zone" \
    '^_acme-challenge'
 
-./zonefiles-hook test_domain_includes_mx_servers example.com
+./dehydrated-zonefiles-hook test_domain_includes_mx_servers example.com
 assert_equal 'domain_includes_mx_servers example.com' 0 ${?}
-./zonefiles-hook test_domain_includes_mx_servers example.net
+./dehydrated-zonefiles-hook test_domain_includes_mx_servers example.net
 assert_equal 'domain_includes_mx_servers example.net' 0 ${?}
-./zonefiles-hook test_domain_includes_mx_servers example.org
+./dehydrated-zonefiles-hook test_domain_includes_mx_servers example.org
 assert_equal 'domain_includes_mx_servers example.org' 1 ${?}
 
 exit 0
