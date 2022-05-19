@@ -246,11 +246,12 @@ domain_includes_mx_servers() {
    return 1
 }
 
+# ${alias} is exported by dehydrated, and equals ${domain} in absence of other aliases.
 deploy_challenge() {
-   local domain="${1}" file hostname
+   local domain="${alias}" file hostname
    for file in "${ZONES_DIR}"/*.zone; do
       [ -r "${file}" ] || continue
-      prepare_zonefile_for_update "${file}" "${1}" || continue
+      prepare_zonefile_for_update "${file}" "${domain}" || continue
 
       echo "  Deploying challenges to zone file ${file}" >&2
       while [ ${#} -ge 3 ]; do

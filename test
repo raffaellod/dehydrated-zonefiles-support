@@ -78,13 +78,17 @@ trap restore_test_files EXIT
 
 today=$(date -u +%Y%m%d)
 
+export alias=example.com
 ./dehydrated-zonefiles-hook deploy_challenge example.com challenge1 key1
+unset alias
 assert_line_equals 'deploy_challenge example.com' "${ZONES_DIR}/example.com.zone" 3 \
    "@             IN  SOA   ns.example.com. username.example.com. ( ${today}01 1d 2h 4w 1h )"
 assert_file_contains 'deploy_challenge example.com' "${ZONES_DIR}/example.com.zone" \
    '^_acme-challenge TXT "key1"$'
 
+export alias=example.net
 ./dehydrated-zonefiles-hook deploy_challenge example.net challenge2 key2 www.example.net challenge3 key3
+unset alias
 assert_line_equals 'deploy_challenge example.net' "${ZONES_DIR}/example.net.zone" 4 \
    '                           36;version'
 assert_file_contains 'deploy_challenge example.net' "${ZONES_DIR}/example.net.zone" \
