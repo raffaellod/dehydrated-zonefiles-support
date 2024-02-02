@@ -177,12 +177,13 @@ prepare_zonefile_for_update() {
    ' |
    {
       read -r domain line && IFS= read -r new_version || return 1
-      sed -i -e "
+      sed -e "
          # Replace the line containing the version.
          ${line} s/^.*$/${new_version}/
          # Clean up any challenges.
          /^_acme-challenge/ d
-      " "${file}"
+      " <"${file}" >"${file}.newver"
+      mv -f "${file}.newver" "${file}"
       return 0
    }
 }
