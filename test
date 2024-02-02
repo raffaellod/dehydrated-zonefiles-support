@@ -1,10 +1,21 @@
 #!/bin/sh
 # -*- coding: utf-8; mode: sh; tab-width: 3; indent-tabs-mode: nil -*-
 #
-# Copyright 2017, 2021
+# Copyright 2017, 2021, 2024
 # Raffaello D. Di Napoli
 
-[ -n "${ZONES_DIR:-}" ] || export ZONES_DIR=test-data
+if [ -z "${ZONES_DIR:-}" ]; then
+   # No externally-set test directory; create one of our own.
+   ZONES_DIR="$(mktemp -p "${TMPDIR:-/tmp}" -d temp_zones.XXXXXX)"
+   export ZONES_DIR
+   zones_dir_rm=true
+elif [ $(ls -1A "${ZONES_DIR}" | wc -l) -gt 0 ]; then
+   echo "${0}: temporary zones directory \`${ZONES_DIR}' must be empty" >&2
+   exit 1
+else
+   zones_dir_rm=false
+fi
+cp -a test-data/*.zone "${ZONES_DIR}"
 
 assert_file_contains() {
    local assert_name="${1}" file="${2}" match="${3}"
@@ -60,6 +71,20 @@ assert_equal() {
    fi
 }
 
+cleanup() {
+   if ${zones_dir_rm}; then
+      echo "Deleting temporary zones directory \`${ZONES_DIR}'" >&2
+      rm -rf -- "${ZONES_DIR}"
+   else
+      echo "Deleting temporary zones in \`${ZONES_DIR}'" >&2
+      find "${ZONES_DIR}" -mindepth 1 -delete
+   fi
+}
+
+trap cleanup EXIT
+
+today=$(date -u +%Y%m%d)
+
 echo "Testing print_domains_txt"
 ./dehydrated-zonefiles-hook print_domains_txt |
 {
@@ -69,14 +94,6 @@ echo "Testing print_domains_txt"
       'example.net mail.example.net ns.example.net www.example.net wwwtest.example.net'
    assert_read_eof 'print_domains_txt'
 }
-
-restore_test_files() {
-   git checkout "${ZONES_DIR}/*.zone"
-}
-
-trap restore_test_files EXIT
-
-today=$(date -u +%Y%m%d)
 
 export alias=example.com
 ./dehydrated-zonefiles-hook deploy_challenge example.com challenge1 key1
